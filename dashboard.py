@@ -42,13 +42,7 @@ if time.time() - st.session_state.last_run > refresh:
 # =========================
 @st.cache_data(ttl=5)
 def load():
-    xls = pd.ExcelFile(FILE)
-
-    data = {}
-    for sheet in xls.sheet_names:
-        data[sheet] = xls.parse(sheet)
-
-    return data
+    return pd.read_excel(FILE, sheet_name=None)
 
 try:
     data = load()
@@ -64,11 +58,16 @@ for sheet_name, df in data.items():
         continue
 
     st.divider()
-    st.subheader(f"📊 {sheet_name}")
+    st.subheader(sheet_name)
+
+    if df.empty:
+        st.warning("Sheet kosong")
+        continue
 
     df = df.fillna("")
-    percent_cols = ["ROE","RevenueGrowth","Margin"]
 
+    # format persen
+    percent_cols = ["ROE","RevenueGrowth","Margin"]
     for c in percent_cols:
         if c in df.columns:
             df[c] = df[c].apply(
@@ -77,15 +76,17 @@ for sheet_name, df in data.items():
 
     st.dataframe(df, use_container_width=True)
 
-    if df.empty:
-        st.warning("Sheet kosong")
-        continue
-
-    # auto chart kalau ada foreign
+    # chart foreign
     if "Foreign Net" in df.columns:
-        st.bar_chart(df.set_index(df.columns[0])["Foreign Net"])
+        try:
+            chart_df = df.copy()
+            chart_df["Foreign Net"] = pd.to_numeric(chart_df["Foreign Net"], errors="coerce")
+            st.bar_chart(chart_df.set_index(chart_df.columns[0])["Foreign Net"])
+        except:
+            pass
+
 
 # =========================
 # LAST UPDATE
 # =========================
-st.sidebar.write("Last update:", datetime.now())
+st.sidebar.text(f"Last update: {datetime.now().strftime('%H:%M:%S')}")
