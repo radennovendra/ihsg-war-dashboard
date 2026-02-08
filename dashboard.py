@@ -70,6 +70,7 @@ for sheet_name, df in data.items():
         st.warning("Sheet kosong")
         continue
 
+
     df = df.fillna("")
 
     # ===== SAFARI SANITIZE =====
@@ -102,7 +103,7 @@ for sheet_name, df in data.items():
         html = df_mobile.to_html(index=False)
         st.markdown(html, unsafe_allow_html=True)
         continue
-        
+
     st.dataframe(df, use_container_width=True)
 
     if "Foreign Net" in df.columns:
