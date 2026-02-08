@@ -8,17 +8,6 @@ from datetime import datetime
 
 BASE = os.path.dirname(__file__)
 FILE = os.path.join(BASE, "reports/HEDGEFUND_TERMINAL.xlsx")
-FILE_ID = "1KZbXSvUXsJ9YZpK1nLv91jfSpfZq9X4f"
-
-def load_excel():
-    url = f"https://drive.google.com/uc?export=download&id={FILE_ID}"
-    r = requests.get(url)
-
-    if r.status_code != 200:
-        st.error("Gagal download Excel dari Drive")
-        st.stop()
-
-    return pd.ExcelFile(io.BytesIO(r.content))
 
 st.set_page_config(layout="wide")
 st.title("🏛️ IHSG WAR MODE DASHBOARD")
