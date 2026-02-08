@@ -16,6 +16,7 @@ from utils.yahoo_safe import safe_download
 from utils.yahoo_pro import download_price
 from utils.rate_guard import guard
 from utils.safe_loop import memory_guard
+from drive_upload import upload_excel
 
 
 WATCHLIST_TOPN = 15
@@ -739,9 +740,11 @@ def run():
         if r.get("accumulation"):
             print("   🟢 Foreign Accumulation Detected")
 
-
+    
     export_terminal_excel(results, total_foreign_today, top_foreign)
+    upload_excel("reports/HEDGEFUND_TERMINAL.xlsx")
     print("✅ Scan done")
+
 
 if __name__ == "__main__":
     run()
