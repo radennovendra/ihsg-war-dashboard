@@ -66,6 +66,20 @@ for sheet_name, df in data.items():
 
     df = df.fillna("")
 
+    # ===== SAFARI SANITIZE =====
+    def clean(x):
+        if isinstance(x, str):
+            return (
+                x.replace("{","")
+                 .replace("}","")
+                 .replace("$","")
+                 .replace("[","")
+                 .replace("]","")
+            )
+        return x
+
+    df = df.applymap(clean)
+
     # format persen
     percent_cols = ["ROE","RevenueGrowth","Margin"]
     for c in percent_cols:
@@ -76,15 +90,13 @@ for sheet_name, df in data.items():
 
     st.dataframe(df, use_container_width=True)
 
-    # chart foreign
     if "Foreign Net" in df.columns:
         try:
             chart_df = df.copy()
             chart_df["Foreign Net"] = pd.to_numeric(chart_df["Foreign Net"], errors="coerce")
-            st.bar_chart(chart_df.set_index(chart_df.columns[0])["Foreign Net"])
+            st.bar_chart(chart_df.set_index(df.columns[0])["Foreign Net"])
         except:
             pass
-
 
 # =========================
 # LAST UPDATE
