@@ -6,17 +6,18 @@ import requests
 import io
 from datetime import datetime
 
-# =========================
-# DETECT DEVICE
-# =========================
-ua = st.context.headers.get("User-Agent", "").lower()
+# ===== SAFARI FIX =====
+st.set_option("client.showErrorDetails", False)
 
-is_iphone = "iphone" in ua
-is_ipad = "ipad" in ua
-is_ios = is_iphone or is_ipad
-is_safari = "safari" in ua and "chrome" not in ua
+st.markdown(
+    """
+    <style>
+    .stMarkdown {white-space: pre-wrap;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-mobile_mode = is_ios or is_safari
 BASE = os.path.dirname(__file__)
 FILE = os.path.join(BASE, "reports/HEDGEFUND_TERMINAL.xlsx")
 
@@ -60,35 +61,42 @@ for sheet_name, df in data.items():
     st.subheader(sheet_name)
 
     if df.empty:
-        st.write("Kosong")
+        st.warning("Sheet kosong")
         continue
 
-    df = df.fillna("").head(50)
+    df = df.fillna("")
 
-    percent_cols = ["ROE","RevenueGrowth","Margin","Win20D","Exp20D"]
+    # ===== SAFARI SANITIZE =====
+    def clean(x):
+        if isinstance(x, str):
+            return (
+                x.replace("{","")
+                 .replace("}","")
+                 .replace("$","")
+                 .replace("[","")
+                 .replace("]","")
+            )
+        return x
 
+    df = df.applymap(clean)
+
+    # format persen
+    percent_cols = ["ROE","RevenueGrowth","Margin"]
     for c in percent_cols:
         if c in df.columns:
             df[c] = df[c].apply(
                 lambda x: f"{x*100:.1f}%" if isinstance(x,(int,float)) else x
             )
 
-    # ===== MOBILE =====
-    if mobile_mode:
-        html = df.to_html(index=False)
-        st.markdown(html, unsafe_allow_html=True)
+    st.dataframe(df, use_container_width=True)
 
-    # ===== DESKTOP =====
-    else:
-        st.dataframe(df, use_container_width=True)
-
-        if "Foreign Net" in df.columns:
-            try:
-                chart_df = df.copy()
-                chart_df["Foreign Net"] = pd.to_numeric(chart_df["Foreign Net"], errors="coerce")
-                st.bar_chart(chart_df.set_index(df.columns[0])["Foreign Net"])
-            except:
-                pass
+    if "Foreign Net" in df.columns:
+        try:
+            chart_df = df.copy()
+            chart_df["Foreign Net"] = pd.to_numeric(chart_df["Foreign Net"], errors="coerce")
+            st.bar_chart(chart_df.set_index(df.columns[0])["Foreign Net"])
+        except:
+            pass
 
 # =========================
 # LAST UPDATE
