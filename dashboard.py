@@ -1,69 +1,96 @@
 import os
 import streamlit as st
 import pandas as pd
+import time
+import requests
+import io
 from datetime import datetime
 
-st.set_page_config(layout="wide")
+# =========================
+# DETECT DEVICE
+# =========================
+ua = st.context.headers.get("User-Agent", "").lower()
 
+is_iphone = "iphone" in ua
+is_ipad = "ipad" in ua
+is_ios = is_iphone or is_ipad
+is_safari = "safari" in ua and "chrome" not in ua
+
+mobile_mode = is_ios or is_safari
 BASE = os.path.dirname(__file__)
 FILE = os.path.join(BASE, "reports/HEDGEFUND_TERMINAL.xlsx")
 
-st.title("IHSG WAR MODE")
+st.set_page_config(layout="wide")
+st.title("🏛️ IHSG WAR MODE DASHBOARD")
 
-# =====================
-# DEVICE DETECTION
-# =====================
-is_mobile = st.sidebar.checkbox("Mobile mode", value=False)
+# =========================
+# AUTO REFRESH
+# =========================
+refresh = st.sidebar.slider("Refresh (detik)", 5, 60, 15)
 
-# =====================
-# LOAD
-# =====================
-@st.cache_data(ttl=30)
+# auto refresh manual loop
+if "last_run" not in st.session_state:
+    st.session_state.last_run = time.time()
+
+if time.time() - st.session_state.last_run > refresh:
+    st.session_state.last_run = time.time()
+    st.rerun()
+
+# =========================
+# LOAD DATA
+# =========================
+@st.cache_data(ttl=5)
 def load():
     return pd.read_excel(FILE, sheet_name=None)
 
 try:
     data = load()
 except:
-    st.write("Excel belum ada")
+    st.error("Excel belum ada")
     st.stop()
+# =========================
+# AUTO SHOW ALL SHEETS
+# =========================
+for sheet_name, df in data.items():
 
-# =====================
-# MOBILE MODE (SAFE)
-# =====================
-if is_mobile:
-
-    st.warning("Mobile Safe Mode")
-
-    sheet = st.selectbox("Sheet", list(data.keys()))
-    df = data[sheet]
-
-    df = df.head(40).fillna("")
-
-    html = df.to_html(index=False)
-    st.markdown(html, unsafe_allow_html=True)
-
-    st.stop()
-
-# =====================
-# DESKTOP MODE
-# =====================
-for sheet, df in data.items():
-
-    if sheet.upper() == "DASHBOARD":
+    if sheet_name.upper() == "DASHBOARD":
         continue
 
-    st.subheader(sheet)
+    st.divider()
+    st.subheader(sheet_name)
 
-    df = df.fillna("")
-    st.dataframe(df, use_container_width=True)
+    if df.empty:
+        st.write("Kosong")
+        continue
 
-    if "Foreign Net" in df.columns:
-        try:
-            chart_df = df.copy()
-            chart_df["Foreign Net"] = pd.to_numeric(chart_df["Foreign Net"], errors="coerce")
-            st.bar_chart(chart_df.set_index(df.columns[0])["Foreign Net"])
-        except:
-            pass
+    df = df.fillna("").head(50)
 
-st.sidebar.write("Updated:", datetime.now().strftime("%H:%M:%S"))
+    percent_cols = ["ROE","RevenueGrowth","Margin","Win20D","Exp20D"]
+
+    for c in percent_cols:
+        if c in df.columns:
+            df[c] = df[c].apply(
+                lambda x: f"{x*100:.1f}%" if isinstance(x,(int,float)) else x
+            )
+
+    # ===== MOBILE =====
+    if mobile_mode:
+        html = df.to_html(index=False)
+        st.markdown(html, unsafe_allow_html=True)
+
+    # ===== DESKTOP =====
+    else:
+        st.dataframe(df, use_container_width=True)
+
+        if "Foreign Net" in df.columns:
+            try:
+                chart_df = df.copy()
+                chart_df["Foreign Net"] = pd.to_numeric(chart_df["Foreign Net"], errors="coerce")
+                st.bar_chart(chart_df.set_index(df.columns[0])["Foreign Net"])
+            except:
+                pass
+
+# =========================
+# LAST UPDATE
+# =========================
+st.sidebar.text(f"Last update: {datetime.now().strftime('%H:%M:%S')}")
