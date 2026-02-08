@@ -1,95 +1,58 @@
 import os
 import streamlit as st
 import pandas as pd
-import time
 from datetime import datetime
 
 st.set_page_config(layout="wide")
-st.title("🏛️ IHSG WAR MODE DASHBOARD")
+
+st.title("IHSG WAR MODE")
 
 BASE = os.path.dirname(__file__)
 FILE = os.path.join(BASE, "reports/HEDGEFUND_TERMINAL.xlsx")
 
-# =========================
-# AUTO REFRESH
-# =========================
-refresh = st.sidebar.slider("Refresh", 10, 120, 30)
-
-if "t" not in st.session_state:
-    st.session_state.t = time.time()
-
-if time.time() - st.session_state.t > refresh:
-    st.session_state.t = time.time()
-    st.rerun()
-
-# =========================
+# ======================
 # LOAD EXCEL
-# =========================
-@st.cache_data(ttl=10)
+# ======================
+@st.cache_data(ttl=30)
 def load():
     return pd.read_excel(FILE, sheet_name=None)
 
 try:
     data = load()
 except:
-    st.error("Excel belum ada")
+    st.write("Excel belum ada")
     st.stop()
 
-# =========================
+# ======================
 # SELECT SHEET
-# =========================
-sheets = list(data.keys())
-sheet = st.sidebar.selectbox("Sheet", sheets)
-
+# ======================
+sheet = st.selectbox("Sheet", list(data.keys()))
 df = data[sheet]
 
 if df.empty:
-    st.warning("Sheet kosong")
+    st.write("Sheet kosong")
     st.stop()
 
-# =========================
-# SAFARI SAFE MODE
-# =========================
+# ======================
+# LIMIT DATA (PENTING)
+# ======================
+df = df.head(50)
 df = df.fillna("")
-df = df.head(100)  # limit rows (penting utk iPhone)
 
-# sanitize text
+# ======================
+# CLEAN TEXT (ANTI SAFARI CRASH)
+# ======================
 def clean(x):
     if isinstance(x, str):
-        return (
-            x.replace("{","")
-             .replace("}","")
-             .replace("$","")
-             .replace("[","")
-             .replace("]","")
-        )
+        return x.replace("{","").replace("}","")
     return x
 
 df = df.applymap(clean)
 
-# percent format
-percent_cols = ["ROE","RevenueGrowth","Margin"]
-for c in percent_cols:
-    if c in df.columns:
-        df[c] = df[c].apply(
-            lambda x: f"{x*100:.1f}%" if isinstance(x,(int,float)) else x
-        )
+# ======================
+# TAMPILKAN TABLE RINGAN
+# ======================
+html = df.to_html(index=False)
+st.markdown(html, unsafe_allow_html=True)
 
-st.subheader(sheet)
-
-# 🔥 SAFARI SAFE TABLE
-st.table(df)
-
-# =========================
-# FOREIGN CHART
-# =========================
-if "Foreign Net" in df.columns:
-    try:
-        chart_df = df.copy()
-        chart_df["Foreign Net"] = pd.to_numeric(chart_df["Foreign Net"], errors="coerce")
-        st.bar_chart(chart_df.set_index(df.columns[0])["Foreign Net"])
-    except:
-        pass
-
-st.sidebar.text("Last update")
-st.sidebar.text(datetime.now().strftime("%H:%M:%S"))
+st.write("Updated:", datetime.now().strftime("%H:%M:%S"))
