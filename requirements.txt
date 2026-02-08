@@ -1,8 +1,8 @@
 yfinance
 pandas
 requests
-streamlit
+streamlit==1.32.0
 openpyxl
 numpy
-altair
+altair==4.2.2
 plotly
