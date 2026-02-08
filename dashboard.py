@@ -6,6 +6,18 @@ import requests
 import io
 from datetime import datetime
 
+# ===== SAFARI FIX =====
+st.set_option("client.showErrorDetails", False)
+
+st.markdown(
+    """
+    <style>
+    .stMarkdown {white-space: pre-wrap;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 BASE = os.path.dirname(__file__)
 FILE = os.path.join(BASE, "reports/HEDGEFUND_TERMINAL.xlsx")
 
