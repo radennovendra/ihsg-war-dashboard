@@ -6,6 +6,12 @@ import requests
 import io
 from datetime import datetime
 
+# =========================
+# MOBILE DETECT (SAFE MODE)
+# =========================
+ua = st.context.headers.get("User-Agent", "").lower()
+is_mobile = "iphone" in ua or "ipad" in ua or "android" in ua
+
 # ===== SAFARI FIX =====
 st.set_option("client.showErrorDetails", False)
 
@@ -87,7 +93,16 @@ for sheet_name, df in data.items():
             df[c] = df[c].apply(
                 lambda x: f"{x*100:.1f}%" if isinstance(x,(int,float)) else x
             )
-
+    
+    # =========================
+    # MOBILE SAFE RENDER
+    # =========================
+    if is_mobile:
+        df_mobile = df.head(40)
+        html = df_mobile.to_html(index=False)
+        st.markdown(html, unsafe_allow_html=True)
+        continue
+        
     st.dataframe(df, use_container_width=True)
 
     if "Foreign Net" in df.columns:
