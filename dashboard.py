@@ -11,7 +11,7 @@ FILE = os.path.join(BASE, "reports/HEDGEFUND_TERMINAL.xlsx")
 FILE_ID = "1KZbXSvUXsJ9YZpK1nLv91jfSpfZq9X4f"
 
 def load_excel():
-    url = "https://drive.google.com/uc?id=1KZbXSvUXsJ9YZpK1nLv91jfSpfZq9X4f"
+    url = f"https://drive.google.com/uc?export=download&id={FILE_ID}"
     r = requests.get(url)
 
     if r.status_code != 200:
