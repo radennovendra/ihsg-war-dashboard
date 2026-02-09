@@ -28,6 +28,22 @@ BASE = os.path.dirname(__file__)
 FILE = os.path.join(BASE, "reports/HEDGEFUND_TERMINAL.xlsx")
 
 st.set_page_config(layout="wide")
+GA_ID = "G-TEXN7VD9M2"
+
+st.markdown(
+    f"""
+    <!-- Google Analytics -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id={GA_ID}"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){{dataLayer.push(arguments);}}
+      gtag('js', new Date());
+      gtag('config', '{GA_ID}');
+    </script>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.title("🏛️ IHSG WAR MODE DASHBOARD")
 
 # =========================
