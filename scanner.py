@@ -400,9 +400,19 @@ def export_terminal_excel(results, total_foreign_today, top_foreign):
                 ws.append(["", rank, sym, r["score"], entry, tp, net_txt])
 
     autosize(ws)
+# ==========================
+# TOP FOREIGN
+# ==========================
     ws2 = wb.create_sheet("TOP FOREIGN")
 
     ws2.append(["Rank","Stock","Foreign Net","Tier"])
+
+    top_foreign_sorted = sorted(
+        results,
+        key=lambda x: x[1].get("foreign_net", 0),
+        reverse=True
+    )[:30]
+
     for i,(sym,r) in enumerate(top_foreign,1):
         ws2.append([
             i,
