@@ -69,6 +69,15 @@ def export_terminal_excel(results, total_foreign_today, top_foreign):
         for col in ws.columns:
             length = max(len(str(c.value)) if c.value else 0 for c in col)
             ws.column_dimensions[get_column_letter(col[0].column)].width = length + 2
+# ==========================
+# TOP FOREIGN
+# ==========================
+def get_top_foreign(results, n=30):
+    return sorted(
+        results,
+        key=lambda x: x[1].get("foreign_net",0),
+        reverse=True
+    )[:n]
 
     # ==========================
     # MARKET REGIME AUTO
@@ -401,17 +410,13 @@ def export_terminal_excel(results, total_foreign_today, top_foreign):
 
     autosize(ws)
 # ==========================
-# TOP FOREIGN
+# TOP FOREIGN EXCEL
 # ==========================
     ws2 = wb.create_sheet("TOP FOREIGN")
 
     ws2.append(["Rank","Stock","Foreign Net","Tier"])
 
-    top_foreign_sorted = sorted(
-        results,
-        key=lambda x: x[1].get("foreign_net", 0),
-        reverse=True
-    )[:30]
+    top_foreign = get_top_foreign(results)
 
     for i,(sym,r) in enumerate(top_foreign,1):
         ws2.append([
@@ -704,6 +709,8 @@ def run():
     if not results:
         print("No results")
         return
+
+    top_foreign = get_top_foreign(results)
 
     raw_scores = [r["raw_score"] for _, r in results]
 
