@@ -25,7 +25,7 @@ BATCH_LIMIT = 200
 def safe_download(sym):
     for _ in range(3):
         try:
-            df = safe_download(sym)
+            df = download_price(sym)
             if df is not None and not df.empty:
                 return df
         except:
@@ -56,6 +56,16 @@ def star(score):
     return "⭐"
 
 # ==========================
+# TOP FOREIGN
+# ==========================
+def get_top_foreign(results, n=30):
+    return sorted(
+        results,
+        key=lambda x: x[1].get("foreign_net",0),
+        reverse=True
+    )[:n]
+
+# ==========================
 # EXCEL EXPORT
 # ==========================
 def export_terminal_excel(results, total_foreign_today, top_foreign):
@@ -68,15 +78,6 @@ def export_terminal_excel(results, total_foreign_today, top_foreign):
         for col in ws.columns:
             length = max(len(str(c.value)) if c.value else 0 for c in col)
             ws.column_dimensions[get_column_letter(col[0].column)].width = length + 2
-# ==========================
-# TOP FOREIGN
-# ==========================
-def get_top_foreign(results, n=30):
-    return sorted(
-        results,
-        key=lambda x: x[1].get("foreign_net",0),
-        reverse=True
-    )[:n]
 
     # ==========================
     # MARKET REGIME AUTO
@@ -415,8 +416,6 @@ def get_top_foreign(results, n=30):
 
     ws2.append(["Rank","Stock","Foreign Net","Tier"])
 
-    top_foreign = get_top_foreign(results)
-
     for i,(sym,r) in enumerate(top_foreign,1):
         ws2.append([
             i,
@@ -424,6 +423,7 @@ def get_top_foreign(results, n=30):
             r.get("foreign_net"),
             r.get("accum_tier")
     ])
+    autosize(ws2)
     # =========================================
     # FUNDAMENTAL TOP — HEDGE FUND VERSION
     # =========================================
