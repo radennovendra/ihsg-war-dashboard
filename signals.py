@@ -140,7 +140,7 @@ def core_signals(df):
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
 
-    if len(df) < 60:
+    if len(df) < 30:
         return None
 
     close = to_float(df["Close"].iloc[-1])
@@ -159,7 +159,7 @@ def core_signals(df):
     avg_value = to_float(avg_value_series.iloc[-2])
 
     if avg_value is None:
-        return None
+        avg_value = 0
 
     liquidity_penalty = bool(avg_value < MIN_AVG_VALUE)
 
@@ -170,7 +170,7 @@ def core_signals(df):
     # ==========================
     high_52w = to_float(df["Close"].max())
     if high_52w is None or high_52w == 0:
-        return None
+        high_52w = close
 
     discount_52w = float((close / high_52w) - 1)
     undervalued_proxy = discount_52w < DISCOUNT_LEVEL

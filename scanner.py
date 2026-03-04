@@ -12,7 +12,6 @@ from signals import evaluate
 from backtest import hedge_expectancy
 from flow_engine.foreign_stock import stock_foreign_map, classify
 from flow_engine.fundamental_engine import get_fundamental
-from utils.yahoo_safe import safe_download
 from utils.yahoo_pro import download_price
 from utils.rate_guard import guard
 from utils.safe_loop import memory_guard
@@ -569,7 +568,7 @@ def run():
     tickers = tickers[:BATCH_LIMIT]
 
     try:
-        ihsg_df = download_price("^JKSE")
+        ihsg_df = safe_download("^JKSE")
         
         if ihsg_df is None or ihsg_df.empty: 
             print("IHSG Failed, Fallback Empty")
@@ -594,7 +593,7 @@ def run():
         # =========================
         try:
             guard()
-            df = download_price(sym)
+            df = safe_download(sym)
             memory_guard(i)
         except Exception as e:
             print(f"Download error {sym}:", e)
