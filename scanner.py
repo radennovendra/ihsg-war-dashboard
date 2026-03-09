@@ -15,11 +15,47 @@ from flow_engine.fundamental_engine import get_fundamental
 from utils.yahoo_pro import download_price
 from utils.rate_guard import guard
 from utils.safe_loop import memory_guard
-
+from telegram_engine import send, send_photo, send_file
+from utils.chart_generator import generate_chart
 
 WATCHLIST_TOPN = 15
 BATCH_LIMIT = 200
 
+def build_telegram_message(results):
+
+    msg = f"""
+    📊 IHSG SMART MONEY
+
+    🕒 {datetime.now().strftime("%d %b %H:%M")}
+
+    Top Institutional Signals
+    """
+
+    for sym,r in results[:5]:
+
+        entry = f"{int(r['entry_low'])}-{int(r['entry_high'])}"
+        tp = int(r["tp2"])
+        sl = int(r["stoploss"])
+
+        foreign = r.get("foreign_net",0)
+
+        if abs(foreign) >= 1e9:
+            ftxt = f"{foreign/1e9:.1f}B"
+        elif abs(foreign) >= 1e6:
+            ftxt = f"{foreign/1e6:.1f}M"
+        else:
+            ftxt = str(int(foreign))
+
+        msg += f"""
+{sym}
+Score: {r['score']}
+Entry: {entry}
+SL: {sl}
+TP: {tp}
+Foreign: {ftxt}
+"""
+
+    return msg
 
 def safe_download(sym):
     for _ in range(3):
@@ -754,9 +790,43 @@ def run():
         
         if r.get("accumulation"):
             print("   🟢 Foreign Accumulation Detected")
-
     
-    export_terminal_excel(results, total_foreign_today, top_foreign)
+    # ==========================
+    # TELEGRAM ALERT
+    # ==========================
+    try:
+        msg = build_telegram_message(results)
+        send(msg)
+
+        top = results[:3]
+
+        for sym, r in top:
+
+            chart = generate_chart(sym, r)
+            if chart and os.path.exists(chart):
+
+                caption = f"""
+    {sym}
+    Score: {r['score']}
+    Entry: {int(r['entry_low'])}-{int(r['entry_high'])}
+    SL: {int(r['stoploss'])}
+    TP: {int(r['tp2'])}
+    """
+                send_photo(chart, caption=caption)
+    
+        excel_path = "reports/HEDGEFUND_TERMINAL.xlsx"
+        
+        export_terminal_excel(results, total_foreign_today, top_foreign)
+        
+        if os.path.exists(excel_path): 
+            send_file(excel_path)
+        
+        print("Excel Sent to Telegram")
+
+        print("📩 Telegram sent")
+    except Exception as e:
+        print("Telegram error:", e)
+
     print("✅ Scan done")
 
 
