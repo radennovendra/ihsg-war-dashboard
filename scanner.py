@@ -1,7 +1,6 @@
 import os
 import time
 import pandas as pd
-import yfinance as yf
 from datetime import datetime
 
 from openpyxl import Workbook
@@ -17,9 +16,12 @@ from utils.rate_guard import guard
 from utils.safe_loop import memory_guard
 from telegram_engine import send, send_photo, send_file
 from utils.chart_generator import generate_chart
+from utils.beifraksi import tick_size, floor_tick, ceil_tick
 
 WATCHLIST_TOPN = 15
 BATCH_LIMIT = 200
+
+price_cache = {}
 
 def get_market_context(ihsg_df):
 
@@ -111,14 +113,26 @@ Score : {r['score']}
     return msg
 
 def safe_download(sym):
+
+    if sym in price_cache:
+        return price_cache[sym]
+
     for _ in range(3):
         try:
             df = download_price(sym)
+
             if df is not None and not df.empty:
+
+                if len(price_cache) > 250:
+                    price_cache.clear()
+
+                price_cache[sym] = df
                 return df
         except:
             pass
+
         time.sleep(1)
+
     return None
 
 # ==========================
@@ -149,14 +163,14 @@ def star(score):
 def get_top_foreign(results, n=30):
     return sorted(
         results,
-        key=lambda x: x[1].get("foreign_net",0),
+        key=lambda x: abs(x[1].get("foreign_net",0)),
         reverse=True
     )[:n]
 
 # ==========================
 # EXCEL EXPORT
 # ==========================
-def export_terminal_excel(results, total_foreign_today, top_foreign, market_regime):
+def export_terminal_excel(results, total_foreign_today, top_foreign, market_regime, ihsg_trend):
 
     os.makedirs("reports", exist_ok=True)
     file = "reports/HEDGEFUND_TERMINAL.xlsx"
@@ -171,6 +185,13 @@ def export_terminal_excel(results, total_foreign_today, top_foreign, market_regi
     # MARKET REGIME AUTO
     # ==========================
     regime = market_regime
+
+    if regime == "RISK-ON":
+        insight = "IHSG Uptrend. Institutional Risk Appetite Strong."
+    elif regime == "RISK-OFF":
+        insight = "IHSG Downtrend. Defensive Positioning."
+    else:
+        insight = "IHSG Sideways. Selective Accumulation"
 
     # ==========================
     # DASHBOARD – FUND MANAGER VERSION
@@ -253,7 +274,7 @@ def export_terminal_excel(results, total_foreign_today, top_foreign, market_regi
         if abs(x)>=1e6: return f"{x/1e6:.1f}M"
         return str(int(x))
 
-    ws["A8"] = "Total Foreign Today"
+    ws["A8"] = "Total Foreign Today (Market)"
     ws["A8"].font = label_font
     ws["B8"] = money(total_foreign_market)
     ws["B8"].font = big_font
@@ -263,7 +284,7 @@ def export_terminal_excel(results, total_foreign_today, top_foreign, market_regi
     else:
         ws["B8"].fill = red
     
-    ws["A9"] = "Total Foreign Accum"
+    ws["A9"] = "Total Foreign Accum (Top Institutional Picks)"
     ws["A9"].font = label_font
     ws["B9"] = money(total_foreign_watchlist)
     ws["B9"].font = big_font
@@ -418,7 +439,7 @@ def export_terminal_excel(results, total_foreign_today, top_foreign, market_regi
     ws = wb.create_sheet("FOREIGN_FLOW")
     ws.append(["Rank","Ticker","ForeignNet"])
 
-    foreign_rank = sorted(results, key=lambda x: x[1].get("foreign_net",0), reverse=True)
+    foreign_rank = sorted(results, key=lambda x:abs(x[1].get("foreign_net",0)), reverse=True)
 
     for i,(sym,r) in enumerate(foreign_rank[:30],1):
         ws.append([i,sym,r.get("foreign_net",0)])
@@ -475,15 +496,17 @@ def export_terminal_excel(results, total_foreign_today, top_foreign, market_regi
             net = r.get("foreign_net", 0)
 
             if abs(net) >= 1e9:
-                net_txt = f"{net/1e9:.1f}B"
+                txt = f"{net/1e9:.1f}B"
+            elif abs(net) >= 1e6:
+                txt = f"{net/1e6:.1f}M"
             else:
-                net_txt = str(int(net))
+                txt = str(int(net))
 
             if first:
-                ws.append([sec, rank, sym, r["score"], entry, tp, net_txt])
+                ws.append([sec, rank, sym, r["score"], entry, tp, txt])
                 first = False
             else:
-                ws.append(["", rank, sym, r["score"], entry, tp, net_txt])
+                ws.append(["", rank, sym, r["score"], entry, tp, txt])
 
     autosize(ws)
 # ==========================
@@ -710,7 +733,13 @@ def run():
         if df is None or df.empty or len(df) < 30:
             print(f"Skip {sym} (no data)")
             continue
+        avg_vol = df["Volume"].rolling(20).mean().iloc[-1]
 
+        if pd.isna(avg_vol) or avg_vol < 500000:
+            print(f"Skip {sym} (low liquidity)")
+            continue
+
+            
         # =========================
         # EVALUATE
         # =========================
@@ -727,9 +756,42 @@ def run():
         res["sector"] = SECTOR_MAP.get(sym, "Unknown")
 
         # =========================
+        # NORMALIZE BEI TICK SIZE
+        # =========================
+
+        res["entry_low"]  = floor_tick(res["entry_low"])
+        res["entry_high"] = ceil_tick(res["entry_high"])
+
+        res["stoploss"] = floor_tick(res["stoploss"])
+
+        res["tp1"] = ceil_tick(res["tp1"])
+        res["tp2"] = ceil_tick(res["tp2"])
+        res["tp3"] = ceil_tick(res["tp3"])
+
+        tick = tick_size(res["entry_low"])
+
+        # minimal entry range = 5 tick
+        min_range = tick * 4
+
+        recent_high = df["High"].rolling(20).max().iloc[-1]
+
+        if res["entry_high"] - res["entry_low"] < min_range:
+            res["entry_high"] = ceil_tick(res["entry_low"] + min_range)
+        if res["entry_high"] > recent_high * 0.99:
+            res["entry_high"] = floor_tick(recent_high * 0.99)
+        if res["tp2"] <= res["entry_high"]:
+            res["tp2"] = ceil_tick(res["entry_high"] * 1.05)
+        if res["tp1"] <= res["entry_high"]:
+            res["tp1"] =  ceil_tick(res["entry_high"] * 1.03)
+        if res["tp3"] <= res["tp2"]:
+            res["tp3"] = ceil_tick(res["tp2"] * 1.08)
+        if res["entry_high"] <= res["entry_low"]:
+            res["entry_high"] = ceil_tick(res["entry_low"] + tick * 2)
+
+        # =========================
         # FOREIGN DATA
         # =========================
-        base = sym.replace(".JK", "").upper()
+        base = sym.split(".")[0].upper()
         net = foreign_map.get(base, 0)
 
         res["foreign_net"] = net
@@ -845,7 +907,13 @@ def run():
     print("\n💰 TOP FOREIGN ACCUMULATION")
     for sym, r in top_foreign:
         net = r["foreign_net"]
-        txt = f"{net/1e9:.1f}B"
+        if abs(net) >= 1e9:
+            txt = f"{net/1e9:.1f}B"
+        elif abs(net) >= 1e6:
+            txt = f"{net/1e6:.1f}M"
+        else:
+            txt = str(int(net))
+                
         print(f"{sym}  {txt}  {r['accum_tier']}")
 
     print("\n📌 TOP WATCHLIST\n")
@@ -894,7 +962,7 @@ def run():
     
         excel_path = "reports/HEDGEFUND_TERMINAL.xlsx"
         
-        export_terminal_excel(results, total_foreign_today, top_foreign, market_regime)
+        export_terminal_excel(results, total_foreign_today, top_foreign, market_regime, ihsg_trend)
         
         if os.path.exists(excel_path): 
             send_file(excel_path)
