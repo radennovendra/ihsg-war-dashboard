@@ -21,21 +21,62 @@ from utils.chart_generator import generate_chart
 WATCHLIST_TOPN = 15
 BATCH_LIMIT = 200
 
-def build_telegram_message(results):
+def get_market_context(ihsg_df):
+
+    if ihsg_df is None or ihsg_df.empty:
+        return "UNKNOWN", "UNKNOWN"
+
+    df = ihsg_df.copy()
+
+    df["MA20"] = df["Close"].rolling(20).mean()
+    df["MA50"] = df["Close"].rolling(50).mean()
+
+    last = df.iloc[-1]
+
+    trend = "SIDEWAYS"
+
+    if last["Close"] > last["MA20"] > last["MA50"]:
+        trend = "UPTREND"
+
+    elif last["Close"] < last["MA20"] < last["MA50"]:
+        trend = "DOWNTREND"
+
+    # Market regime
+    regime = "NEUTRAL"
+
+    if trend == "UPTREND":
+        regime = "RISK-ON"
+
+    elif trend == "DOWNTREND":
+        regime = "RISK-OFF"
+
+    return regime, trend
+
+def build_telegram_message(results, market_regime, ihsg_trend):
 
     msg = f"""
-    📊 IHSG SMART MONEY
+📊 IHSG SMART MONEY
+🕒 {datetime.now().strftime("%d %b %H:%M")}
 
-    🕒 {datetime.now().strftime("%d %b %H:%M")}
+🌏 Market Regime
+IHSG Trend : {ihsg_trend}
+Risk Mode  : {market_regime}
 
-    Top Institutional Signals
-    """
+━━━━━━━━━━━━━━━━
+"""
 
-    for sym,r in results[:5]:
+    medals = ["🥇","🥈","🥉","4️⃣","5️⃣"]
 
-        entry = f"{int(r['entry_low'])}-{int(r['entry_high'])}"
+    for i,(sym,r) in enumerate(results[:5]):
+
+        sector = r.get("sector","Unknown")
+
+        entry = f"{int(r['entry_low'])} — {int(r['entry_high'])}"
         tp = int(r["tp2"])
         sl = int(r["stoploss"])
+
+        win20 = r.get("win20d",0)*100
+        exp20 = r.get("exp20",0)*100
 
         foreign = r.get("foreign_net",0)
 
@@ -43,16 +84,28 @@ def build_telegram_message(results):
             ftxt = f"{foreign/1e9:.1f}B"
         elif abs(foreign) >= 1e6:
             ftxt = f"{foreign/1e6:.1f}M"
+        elif abs(foreign) >= 1e3:
+            ftxt = f"{foreign/1e3:.0f}K"
         else:
             ftxt = str(int(foreign))
 
+        medal = medals[i]
+
         msg += f"""
-{sym}
-Score: {r['score']}
-Entry: {entry}
-SL: {sl}
-TP: {tp}
-Foreign: {ftxt}
+{medal} {sym} | {sector}
+Score : {r['score']}
+
+🎯 Entry : {entry}
+🛑 SL    : {sl}
+🏁 TP    : {tp}
+
+📈 WinRate20D : {win20:.0f}%
+⚡ Exp20D     : {exp20:.2f}%
+
+🌍 Foreign Flow
+{ftxt} | {r.get("foreign_status","")}
+
+━━━━━━━━━━━━━━━━
 """
 
     return msg
@@ -103,7 +156,7 @@ def get_top_foreign(results, n=30):
 # ==========================
 # EXCEL EXPORT
 # ==========================
-def export_terminal_excel(results, total_foreign_today, top_foreign):
+def export_terminal_excel(results, total_foreign_today, top_foreign, market_regime):
 
     os.makedirs("reports", exist_ok=True)
     file = "reports/HEDGEFUND_TERMINAL.xlsx"
@@ -117,18 +170,7 @@ def export_terminal_excel(results, total_foreign_today, top_foreign):
     # ==========================
     # MARKET REGIME AUTO
     # ==========================
-    avg_score = sum(r["score"] for _,r in results)/len(results)
-    total_foreign = sum(r.get("foreign_net",0) for _,r in results)
-
-    if avg_score > 70 and total_foreign > 0:
-        regime = "RISK-ON"
-        insight = "Institusi akumulasi. Market bullish bias."
-    elif avg_score < 45 and total_foreign < 0:
-        regime = "RISK-OFF"
-        insight = "Distribusi asing dominan. Defensive mode."
-    else:
-        regime = "NEUTRAL"
-        insight = "Sideways. Selektif akumulasi."
+    regime = market_regime
 
     # ==========================
     # DASHBOARD – FUND MANAGER VERSION
@@ -592,6 +634,31 @@ def accum_tier(net):
         return "DISTRIB"
     return "NEUTRAL"
 
+def save_watchlist(results):
+
+    os.makedirs("runtime", exist_ok=True)
+
+    watchlist = []
+
+    for sym, r in results[:WATCHLIST_TOPN]:
+
+        watchlist.append({
+            "symbol": sym,
+            "entry_low": r["entry_low"],
+            "entry_high": r["entry_high"],
+            "stoploss": r["stoploss"],
+            "tp2": r["tp2"],
+            "score": r["score"]
+        })
+
+    df = pd.DataFrame(watchlist)
+
+    file = "runtime/watchlist.csv"
+
+    df.to_csv(file, index=False)
+
+    print("📡 Watchlist saved:", file)
+
 # ==========================
 # MAIN
 # ==========================
@@ -603,13 +670,18 @@ def run():
     tickers = pd.read_csv("data/universe_institutional.csv", header=None)[0].tolist()
     tickers = tickers[:BATCH_LIMIT]
 
+    market_regime = "UNKNOWN"
+    ihsg_trend = "UNKNOWN"
+
     try:
         ihsg_df = safe_download("^JKSE")
         
         if ihsg_df is None or ihsg_df.empty: 
             print("IHSG Failed, Fallback Empty")
             ihsg_df = pd.DataFrame()
-    
+        else:
+            market_regime, ihsg_trend = get_market_context(ihsg_df)
+
     except Exception as e:
         print("IHSG Downloader error", e)
         ihsg_df = pd.DataFrame()
@@ -753,6 +825,9 @@ def run():
         r["score"] = int(pct * 100)
 
     results.sort(key=lambda x: x[1]["score"], reverse=True)
+
+    save_watchlist(results)
+    
     top_foreign = sorted(
         results,
         key=lambda x: abs(x[1].get("foreign_net", 0)),
@@ -795,7 +870,7 @@ def run():
     # TELEGRAM ALERT
     # ==========================
     try:
-        msg = build_telegram_message(results)
+        msg = build_telegram_message(results, market_regime, ihsg_trend)
         send(msg)
 
         top = results[:3]
@@ -811,12 +886,15 @@ def run():
     Entry: {int(r['entry_low'])}-{int(r['entry_high'])}
     SL: {int(r['stoploss'])}
     TP: {int(r['tp2'])}
+
+    Win20D: {r.get('win20d',0)*100:.0f}%
+    Exp20D: {r.get('exp20',0)*100:.2f}%
     """
                 send_photo(chart, caption=caption)
     
         excel_path = "reports/HEDGEFUND_TERMINAL.xlsx"
         
-        export_terminal_excel(results, total_foreign_today, top_foreign)
+        export_terminal_excel(results, total_foreign_today, top_foreign, market_regime)
         
         if os.path.exists(excel_path): 
             send_file(excel_path)
@@ -828,6 +906,21 @@ def run():
         print("Telegram error:", e)
 
     print("✅ Scan done")
+
+    watchlist = []
+
+    for sym, r in results[:10]:
+
+        watchlist.append({
+            "symbol": sym,
+            "entry_low": r["entry_low"],
+            "entry_high": r["entry_high"],
+            "stoploss": r["stoploss"],
+            "tp2": r["tp2"],
+            "score": r["score"]
+        })
+
+    return watchlist
 
 
 if __name__ == "__main__":

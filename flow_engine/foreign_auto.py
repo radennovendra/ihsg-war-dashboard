@@ -1,6 +1,8 @@
 import os
 import requests
 import pandas as pd
+import time
+import random
 from datetime import datetime
 
 CACHE_DIR = "data/foreign_cache"
@@ -9,37 +11,90 @@ HIST_DIR = "data/foreign_history"
 os.makedirs(CACHE_DIR, exist_ok=True)
 os.makedirs(HIST_DIR, exist_ok=True)
 
-URL = "https://www.idx.co.id/primary/TradingSummary/GetStockSummary?length=9999&start=0"
+IDX_ENDPOINT = "https://www.idx.co.id/primary/TradingSummary/GetStockSummary"
 
-# =========================
-# FETCH IDX
-# =========================
+USER_AGENTS = [
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_5)",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    "Mozilla/5.0 (X11; Linux x86_64)",
+]
+
+
 def fetch_idx():
 
-    ts = str(int(datetime.now().timestamp()*1000))
+    session = requests.Session()
 
-    url = f"https://www.idx.co.id/primary/TradingSummary/GetStockSummary?length=9999&start=0&_={ts}"
+    time.sleep(random.uniform(1,3))
 
-    headers = {
-        "User-Agent": "Mozilla/5.0",
-        "Referer": "https://www.idx.co.id/",
-        "Accept": "application/json, text/plain, */*",
-        "X-Requested-With": "XMLHttpRequest"
-    }
+    for attempt in range(5):
 
-    r = requests.get(url, headers=headers, timeout=20)
-    r.raise_for_status()
+        try:
 
-    data = r.json()["data"]
-    df = pd.DataFrame(data)
+            ts = str(int(datetime.now().timestamp()*1000))
 
-    df["Ticker"] = df["StockCode"]
-    df["ForeignNet"] = df["ForeignBuy"] - df["ForeignSell"]
+            url = f"{IDX_ENDPOINT}?length=9999&start=0&_={ts}"
 
-    print("🌍 IDX rows:", len(df))
-    print("🌍 TOTAL FOREIGN:", df["ForeignNet"].sum())
+            headers = {
+                "User-Agent": random.choice(USER_AGENTS),
+                "Referer": "https://www.idx.co.id/",
+                "Accept": "application/json, text/plain, */*",
+                "X-Requested-With": "XMLHttpRequest",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+                "Connection": "keep-alive"
+            }
 
-    return df[["Ticker","ForeignNet"]]
+            r = session.get(url, headers=headers, timeout=20)
+
+            r.raise_for_status()
+
+            data = r.json().get("data")
+
+            if not data:
+                raise Exception("Empty IDX data")
+
+            df = pd.DataFrame(data)
+
+            df.columns = [c.lower() for c in df.columns]
+
+            df = df.rename(columns={
+                "stockcode": "Ticker",
+                "foreignbuy": "ForeignBuy",
+                "foreignsell": "ForeignSell"
+            })
+            
+            required = ["Ticker", "ForeignBuy", "ForeignSell"]
+
+            for c in required:
+                if c not in df.columns:
+                    raise Exception(f"IDX column missing: {c}")
+            
+            df = df.dropna(subset=["Ticker"])
+
+            df["Ticker"] = df["Ticker"].astype(str)
+
+            df["ForeignBuy"] = pd.to_numeric(df["ForeignBuy"], errors="coerce").fillna(0)
+            df["ForeignSell"] = pd.to_numeric(df["ForeignSell"], errors="coerce").fillna(0)
+
+            df["ForeignNet"] = df["ForeignBuy"] - df["ForeignSell"]
+
+            df = df[["Ticker","ForeignNet"]]
+
+            print("🌍 IDX rows:", len(df))
+            print("🌍 TOTAL FOREIGN:", int(df["ForeignNet"].sum()))
+
+            return df
+
+        except Exception as e:
+
+            print(f"⚠️ IDX attempt {attempt+1} failed -> {e}")
+
+            # exponential backoff
+            sleep_time = random.uniform(2,5) * (attempt+1)
+
+            time.sleep(sleep_time)
+
+    raise Exception("❌ IDX API blocked after retries")
 
 # =========================
 # SAVE TODAY
@@ -99,7 +154,7 @@ def save_history_if_changed():
         last_df = pd.read_csv(f"{HIST_DIR}/{last}")
         last_total = last_df["ForeignNet"].sum()
 
-        if abs(new_total - last_total) < 1:
+        if abs(new_total - last_total) < 100000000:
             print("⚠️ Foreign not changed → skip history save")
             return
 
@@ -114,9 +169,14 @@ def main():
     df = auto_fetch()
 
     if df is not None:
+
+        print(df.sort_values("ForeignNet", ascending=False).head(5))
+
         save_history_if_changed()
 
     print("✅ Done\n")
+
+
 
 if __name__ == "__main__":
     main()
