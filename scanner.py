@@ -987,17 +987,17 @@ def run():
                 continue
                 
             caption = f"""
-            {sym}
-            Score: {r['score']}
-            Entry: {int(r['entry_low'])}-{int(r['entry_high'])}
-            SL: {int(r['stoploss'])}
-            TP: {int(r['tp2'])}
+{sym}
+Score: {r['score']}
+Entry: {int(r['entry_low'])}-{int(r['entry_high'])}
+SL: {int(r['stoploss'])}
+TP: {int(r['tp2'])}
 
-            BACKTEST (1 Month) :
-            📈 Winrate: {r.get('win20d',0)*100:.0f}%
-            ⚡ Expectancy: {r.get('exp20',0)*100:.2f}%
-            💰 ProfitFactor: {pf:.2f} {badge}
-            """
+BACKTEST (1 Month) :
+📈 Winrate: {r.get('win20d',0)*100:.0f}%
+⚡ Expectancy: {r.get('exp20',0)*100:.2f}%
+💰 ProfitFactor: {pf:.2f} {badge}
+"""
             print("Sending chart:", chart)
 
             send_photo(chart, caption=caption)

@@ -33,8 +33,8 @@ VWAP_COLOR = "#ffd166"
 BUY_COLOR = "#00ff88"
 SELL_COLOR = "#ff4d4d"
 
-ENTRY_ZONE_COLOR = "#fbbf24"
-ACC_ZONE_COLOR = "#00e5ff"
+ENTRY_ZONE_COLOR = "#f59e0b"
+ACC_ZONE_COLOR = "#06b6d4"
 
 SL_COLOR = "#ff4d4d"
 TP_COLOR = "#00ff88"
@@ -297,22 +297,6 @@ def generate_chart(sym, r, df):
 
         buy_chart = buy_chart.replace(0, np.nan)
         sell_chart = sell_chart.replace(0, np.nan)
-        
-        buy_plot = mpf.make_addplot(
-            buy_chart,
-            type="scatter",
-            marker="^",
-            color=BUY_COLOR,
-            markersize=80,
-        )
-
-        sell_plot = mpf.make_addplot(
-            sell_chart,
-            type="scatter",
-            marker="v",
-            color=SELL_COLOR,
-            markersize=80,
-        )
 
         # =========================
         # ENTRY SL TP
@@ -408,25 +392,16 @@ def generate_chart(sym, r, df):
         if chart_df["EMA9"].notna().sum() > 3:
             apds.append(mpf.make_addplot(chart_df["EMA9"], color=EMA9_COLOR))
 
-        if buy_chart.dropna().shape[0] > 0:
-            apds.append(buy_plot)
-
-        if sell_chart.dropna().shape[0] > 0:
-            apds.append(sell_plot)
-
 
         # =========================
         # PRICE RANGE
         # =========================
 
         high_val = chart_df["High"].max()
-
         low_val = chart_df["Low"].min()
 
         price_max = max(high_val,tp) * 1.08
-
         price_min = min(low_val,sl) * 0.95
-
 
         # =========================
         # STYLE
@@ -440,6 +415,31 @@ def generate_chart(sym, r, df):
             gridstyle="--",
             y_on_right=True
         )
+
+        # =========================
+        # BUY & SELL PLOT
+        # =========================
+        buy_plot = mpf.make_addplot(
+            buy_chart,
+            type="scatter",
+            marker="^",
+            color=BUY_COLOR,
+            markersize=120,
+        )
+
+        sell_plot = mpf.make_addplot(
+            sell_chart,
+            type="scatter",
+            marker="v",
+            color=SELL_COLOR,
+            markersize=120,
+        )
+
+        if buy_chart.dropna().shape[0] > 0:
+            apds.append(buy_plot)
+
+        if sell_chart.dropna().shape[0] > 0:
+            apds.append(sell_plot)
 
 
         # =========================
@@ -455,8 +455,9 @@ def generate_chart(sym, r, df):
             volume_panel=1,
             volume_alpha=0.7,
             hlines=dict(
-                hlines=[sl,tp,breakout],
-                colors=[SL_COLOR,TP_COLOR,ACC_ZONE_COLOR]
+                hlines=[sl,tp],
+                colors=[SL_COLOR,TP_COLOR],
+                linewidths=1.5
             ),
             returnfig=True,
             figsize=(9,5),
@@ -489,7 +490,7 @@ def generate_chart(sym, r, df):
         )
 
         ax = axlist[0]
-
+    
         ax.text(
             chart_df.index[-1],
             entry_high,
@@ -559,7 +560,7 @@ def generate_chart(sym, r, df):
         ax.axhspan(
             zone_low,
             breakout,
-            alpha=0.025,
+            alpha=0.12,
             color=ACC_ZONE_COLOR
         )
 
@@ -567,7 +568,7 @@ def generate_chart(sym, r, df):
             entry_low,
             entry_high,
             color=ENTRY_ZONE_COLOR,
-            alpha=0.06
+            alpha=0.18
         )
 
         legend_items = [
@@ -582,8 +583,8 @@ def generate_chart(sym, r, df):
             Line2D([0],[0],color=SL_COLOR,lw=2, label="STOP LOSS"),
             Line2D([0],[0],color=TP_COLOR,lw=2, label="TAKE PROFIT"),
 
-            Patch(facecolor=ENTRY_ZONE_COLOR,alpha=0.06,edgecolor="none", label="ENTRY ZONE"),
-            Patch(facecolor=ACC_ZONE_COLOR,alpha=0.025,edgecolor="none", label="ACCUMULATION ZONE")
+            Patch(facecolor=ENTRY_ZONE_COLOR,alpha=0.18,edgecolor="none", label="ENTRY ZONE"),
+            Patch(facecolor=ACC_ZONE_COLOR,alpha=0.12,edgecolor="none", label="ACCUMULATION ZONE")
         ]
 
         ax.legend(
