@@ -8,16 +8,32 @@ import matplotlib.pyplot as plt
 from utils.yahoo_pro import download_price
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
+import matplotlib
+from PIL import Image
 
-MA20_COLOR = "#ffffff"
-MA30_COLOR = "#b388ff"
-VWAP_COLOR = "#ffd166"
+
+Image.MAX_IMAGE_PIXELS = None
+matplotlib.use("Agg")
+plt.rcParams["figure.dpi"] = 120
+plt.rcParams["savefig.dpi"] = 120
+plt.rcParams["lines.antialiased"] = True
+plt.rcParams.update({
+    "font.size": 9,
+    "axes.titlesize": 10,
+    "axes.labelsize": 9
+})
+
+matplotlib.rcParams['font.family'] = 'DejaVu Sans'
+
 EMA9_COLOR = "#3a86ff"
+EMA21_COLOR = "#ff9f1c"
+MA50_COLOR = "#b388ff"
+VWAP_COLOR = "#ffd166"
 
 BUY_COLOR = "#00ff88"
 SELL_COLOR = "#ff4d4d"
 
-ENTRY_ZONE_COLOR = "#ffd166"
+ENTRY_ZONE_COLOR = "#fbbf24"
 ACC_ZONE_COLOR = "#00e5ff"
 
 SL_COLOR = "#ff4d4d"
@@ -25,35 +41,28 @@ TP_COLOR = "#00ff88"
 
 os.makedirs("charts", exist_ok=True)
 
+IHSG_DATA = download_price("^JKSE")
 
-def generate_chart(sym, r):
+if IHSG_DATA is None or IHSG_DATA.empty:
+    IHSG_DATA = pd.DataFrame()
 
-    file = f"charts/{sym}.png"
+def generate_chart(sym, r, df):
+
+    sym_clean = sym.replace(".JK","")
+    file = f"charts/{sym_clean}.png"
+
+    # chart cache
+    if os.path.exists(file):
+        age = time.time() - os.path.getmtime(file)
+        if age < 3600:
+            return file
+
+    print("Generating chart:", sym)
 
     try:
 
-        # =========================
-        # DOWNLOAD PRICE
-        # =========================
-
-        df = None
-
-        for _ in range(3):
-
-            try:
-                df = download_price(sym)
-
-                if df is not None and not df.empty:
-                    break
-
-            except:
-                pass
-
-            time.sleep(0.05)
-
         if df is None or df.empty:
             return None
-
 
         # =========================
         # BASIC CLEANING
@@ -80,7 +89,7 @@ def generate_chart(sym, r):
         # USE LAST 1 MONTH
         # =========================
 
-        df = df.tail(30)
+        df = df.tail(200)
 
         if len(df) < 10:
             return None
@@ -104,22 +113,77 @@ def generate_chart(sym, r):
         # INDICATORS
         # =========================
 
-        df["MA20"] = df["Close"].rolling(20).mean()
+        df["EMA21"] = df["Close"].ewm(span=21, adjust=False).mean()
 
-        df["MA30"] = df["Close"].rolling(30, min_periods=10).mean()
+        df["MA50"] = df["Close"].rolling(50).mean()
 
         df["EMA9"] = df["Close"].ewm(span=9, adjust=False).mean()
 
         typical = (df["High"] + df["Low"] + df["Close"]) / 3
 
-        df["VWAP"] = (typical * df["Volume"]).cumsum() / df["Volume"].cumsum()
+        df["VWAP"] = ((typical * df["Volume"]).rolling(20).sum() / df["Volume"].rolling(20).sum())
 
+        trend_up = df["EMA9"] > df["EMA21"]
+        trend_down = df["EMA9"] < df["EMA21"]
+
+        vol_confirm = df["Volume"] > df["Volume"].rolling(20).mean()
+
+        # =========================
+        # ATR
+        # =========================
+
+        df["ATR"] = (
+            pd.concat([
+                df["High"] - df["Low"],
+                abs(df["High"] - df["Close"].shift()),
+                abs(df["Low"] - df["Close"].shift())
+            ], axis=1).max(axis=1)
+        ).rolling(14).mean()
+
+        volatility_ok = df["ATR"] > df["Close"] * 0.01
+
+        # =========================
+        # Relative Strength vs IHSG
+        # =========================
+        if not IHSG_DATA.empty:
+            ihsg = IHSG_DATA["Close"].pct_change().rolling(20).sum()
+            ihsg = ihsg.reindex(df.index).ffill()
+        else:
+            ihsg = pd.Series(0, index=df.index)
+
+        ihsg_ma = ihsg.rolling(50).mean()
+
+        market_bull = ihsg > ihsg_ma
+
+        stock_rs = df["Close"].pct_change().rolling(20).sum()
+
+        rs_strength = stock_rs > ihsg
+        rs_label = "RS STRONG" if rs_strength.iloc[-1] else "RS WEAK"
+
+        # =========================
+        # Liquidity Filter
+        # =========================
+
+        df["Value"] = df["Close"] * df["Volume"]
+
+        liquid = df["Value"].rolling(20).mean() > 20_000_000_000
+
+        # =========================
+        # Accumulation Detector
+        # =========================
+
+        df["Range"] = df["High"] - df["Low"]
+
+        volatility_contract = (
+            df["Range"].rolling(10).mean() <
+            df["Range"].rolling(50).mean()
+        )
 
         # =========================
         # BREAKOUT ZONE
         # =========================
 
-        window = df.tail(20)
+        window = df.tail(60)
 
         if window.empty:
             return None
@@ -138,10 +202,10 @@ def generate_chart(sym, r):
         elif last_close >= breakout * 0.98:
             breakout_label = "NEAR BREAKOUT"
 
-
         # =========================
         # BUY SELL SIGNAL
         # =========================
+
         buy = pd.Series(np.nan, index=df.index)
         sell = pd.Series(np.nan, index=df.index)
 
@@ -150,40 +214,28 @@ def generate_chart(sym, r):
         # ========================
 
         cross_up = (
-            (df["EMA9"] > df["MA20"]) &
-            (df["EMA9"].shift(1) <= df["MA20"].shift(1))
+            (df["EMA9"] > df["EMA21"]) &
+            (df["EMA9"].shift(1) <= df["EMA21"].shift(1))
         )
-
-        buy[cross_up] = df["Low"] * 0.98
-
 
         cross_down = (
-            (df["EMA9"] < df["MA20"]) &
-            (df["EMA9"].shift(1) >= df["MA20"].shift(1))
+            (df["EMA9"] < df["EMA21"]) &
+            (df["EMA9"].shift(1) >= df["EMA21"].shift(1))
         )
-
-        sell[cross_down] = df["High"] * 1.02
-
 
         # ========================
         # 2 EMA PULLBACK
         # ========================
 
         pullback_buy = (
-            (df["Close"] > df["MA20"]) &
+            (df["Close"] > df["EMA21"]) &
             (df["Low"] <= df["EMA9"])
         )
 
-        buy[pullback_buy] = df["Low"] * 0.98
-
-
         pullback_sell = (
-            (df["Close"] < df["MA20"]) &
+            (df["Close"] < df["EMA21"]) &
             (df["High"] >= df["EMA9"])
         )
-
-        sell[pullback_sell] = df["High"] * 1.02
-
 
         # ========================
         # 3 VWAP RECLAIM
@@ -194,16 +246,10 @@ def generate_chart(sym, r):
             (df["Close"].shift(1) <= df["VWAP"].shift(1))
         )
 
-        buy[vwap_buy] = df["Low"] * 0.98
-
-
         vwap_sell = (
             (df["Close"] < df["VWAP"]) &
             (df["Close"].shift(1) >= df["VWAP"].shift(1))
         )
-
-        sell[vwap_sell] = df["High"] * 1.02
-
 
         # ========================
         # 4 MOMENTUM CANDLE
@@ -211,36 +257,62 @@ def generate_chart(sym, r):
 
         momentum_buy = (
             (df["Close"] > df["Open"]) &
-            (df["Close"] > df["High"].shift(1))
+            (df["Close"] > df["High"].shift(1)) &
+            (df["Volume"] > df["Volume"].rolling(20).mean()*1.2)
         )
-
-        buy[momentum_buy] = df["Low"] * 0.98
-
 
         momentum_sell = (
             (df["Close"] < df["Open"]) &
             (df["Close"] < df["Low"].shift(1))
         )
 
-        sell[momentum_sell] = df["High"] * 1.02
+        # PRIORITY SYSTEM
+
+        # 1 MOMENTUM
+        buy[momentum_buy & trend_up & vol_confirm & volatility_ok & rs_strength & liquid] = df["Low"] * 0.97
+
+        # 2 VWAP RECLAIM
+        buy[vwap_buy & buy.isna() & vol_confirm & rs_strength & liquid] = df["Low"] * 0.97
+
+        # 3 EMA CROSS
+        buy[cross_up & buy.isna() & trend_up & rs_strength & liquid] = df["Low"] * 0.97
+
+        # 4 EMA PULLBACK
+        buy[pullback_buy & buy.isna() & trend_up & volatility_contract & rs_strength & liquid] = df["Low"] * 0.97
 
 
+        # SELL SIDE
+        sell[momentum_sell & trend_down & vol_confirm] = df["High"] * 1.03
+        sell[vwap_sell & sell.isna() & vol_confirm] = df["High"] * 1.03
+        sell[cross_down & sell.isna() & trend_down] = df["High"] * 1.03
+        sell[pullback_sell & sell.isna() & trend_down] = df["High"] * 1.03
+        
+        buy = buy
+        sell = sell
+        
+        chart_df = df.tail(20).copy()
+
+        buy_chart = buy.loc[chart_df.index]
+        sell_chart = sell.loc[chart_df.index]
+
+        buy_chart = buy_chart.replace(0, np.nan)
+        sell_chart = sell_chart.replace(0, np.nan)
+        
         buy_plot = mpf.make_addplot(
-            buy,
+            buy_chart,
             type="scatter",
             marker="^",
             color=BUY_COLOR,
-            markersize=120
+            markersize=80,
         )
 
         sell_plot = mpf.make_addplot(
-            sell,
+            sell_chart,
             type="scatter",
             marker="v",
             color=SELL_COLOR,
-            markersize=120
+            markersize=80,
         )
-
 
         # =========================
         # ENTRY SL TP
@@ -277,47 +349,69 @@ def generate_chart(sym, r):
 
         trend = "SIDEWAYS"
 
-        if df["EMA9"].iloc[-1] > df["MA20"].iloc[-1] > df["MA30"].iloc[-1]:
+        if df["EMA9"].iloc[-1] > df["EMA21"].iloc[-1] > df["MA50"].iloc[-1]:
             trend = "STRONG UPTREND"
 
-        elif df["EMA9"].iloc[-1] < df["MA20"].iloc[-1] < df["MA30"].iloc[-1]:
+        elif df["EMA9"].iloc[-1] < df["EMA21"].iloc[-1] < df["MA50"].iloc[-1]:
             trend = "DOWNTREND"
+        
+        # =========================
+        # Score Engine
+        # =========================
 
+        score = 0
+
+        if trend_up.iloc[-1]:
+            score += 2
+
+        if vol_confirm.iloc[-1]:
+            score += 2
+
+        if rs_strength.iloc[-1]:
+            score += 2
+
+        if volatility_ok.iloc[-1]:
+            score += 2
+        
+        if volatility_contract.iloc[-1]:
+            score += 2
+        
+        if liquid.iloc[-1]:
+            score += 2
+
+        if breakout_label == "BREAKOUT":
+            score += 2
 
         # =========================
         # TITLE
         # =========================
 
         title = (
-            f"{sym} | Score {r['score']} | {trend} | Foreign {ftxt}\n"
-            f"Entry {int(entry_low)}-{int(entry_high)} "
-            f"SL {int(sl)} TP {int(tp)} "
-            f"{breakout_label}"
+            f"{sym} | {trend} | {rs_label}\n"
+            f"Entry {int(entry_low)}-{int(entry_high)} | SL {int(sl)} | TP {int(tp)}"
         )
-
-
         # =========================
         # ADDPLOTS
         # =========================
 
         apds = []
 
-        if df["MA20"].notna().sum() > 3:
-            apds.append(mpf.make_addplot(df["MA20"], color=MA20_COLOR))
+        if chart_df["EMA21"].notna().sum() > 3:
+            apds.append(mpf.make_addplot(chart_df["EMA21"], color=EMA21_COLOR))
 
-        if df["MA30"].notna().sum() > 3:
-            apds.append(mpf.make_addplot(df["MA30"], color=MA30_COLOR))
+        if chart_df["MA50"].notna().sum() > 3:
+            apds.append(mpf.make_addplot(chart_df["MA50"], color=MA50_COLOR))
 
-        if df["VWAP"].notna().sum() > 3:
-            apds.append(mpf.make_addplot(df["VWAP"], color=VWAP_COLOR))
+        if chart_df["VWAP"].notna().sum() > 3:
+            apds.append(mpf.make_addplot(chart_df["VWAP"], color=VWAP_COLOR))
 
-        if df["EMA9"].notna().sum() > 3:
-            apds.append(mpf.make_addplot(df["EMA9"], color=EMA9_COLOR))
+        if chart_df["EMA9"].notna().sum() > 3:
+            apds.append(mpf.make_addplot(chart_df["EMA9"], color=EMA9_COLOR))
 
-        if buy.notna().sum() > 0:
+        if buy_chart.dropna().shape[0] > 0:
             apds.append(buy_plot)
 
-        if sell.notna().sum() > 0:
+        if sell_chart.dropna().shape[0] > 0:
             apds.append(sell_plot)
 
 
@@ -325,9 +419,9 @@ def generate_chart(sym, r):
         # PRICE RANGE
         # =========================
 
-        high_val = df["High"].max()
+        high_val = chart_df["High"].max()
 
-        low_val = df["Low"].min()
+        low_val = chart_df["Low"].min()
 
         price_max = max(high_val,tp) * 1.08
 
@@ -340,10 +434,11 @@ def generate_chart(sym, r):
 
         style = mpf.make_mpf_style(
             base_mpf_style="nightclouds",
-            y_on_right=True,
+            facecolor="#0b1220",
+            figcolor="#0b1220",
+            gridcolor="#1f2937",
             gridstyle="--",
-            facecolor="#0f172a",
-            figcolor="#0f172a"
+            y_on_right=True
         )
 
 
@@ -352,65 +447,173 @@ def generate_chart(sym, r):
         # =========================
 
         fig, axlist = mpf.plot(
-            df,
+            chart_df,
             type="candle",
             style=style,
             addplot=apds if len(apds)>0 else None,
             volume=True,
-            title=title,
+            volume_panel=1,
+            volume_alpha=0.7,
             hlines=dict(
-                hlines=[entry_low,entry_high,sl,tp,breakout,zone_low],
-                colors=[ENTRY_ZONE_COLOR,ENTRY_ZONE_COLOR,SL_COLOR,TP_COLOR,ACC_ZONE_COLOR,"grey"]
+                hlines=[sl,tp,breakout],
+                colors=[SL_COLOR,TP_COLOR,ACC_ZONE_COLOR]
             ),
             returnfig=True,
-            figsize=(12,8),
+            figsize=(9,5),
             ylim=(price_min,price_max),
             fill_between=dict(
                 y1=entry_low,
                 y2=entry_high,
-                alpha=0.15,
+                alpha=0.07,
                 color=ENTRY_ZONE_COLOR
             )
         )
 
+        fig.text(
+            0.5,
+            0.97,
+            f"{sym} | {trend} | {rs_label}",
+            ha="center",
+            fontsize=12,
+            fontweight="bold",
+            color="white"
+        )
+
+        fig.text(
+            0.5,
+            0.94,
+            f"Entry {int(entry_low)}-{int(entry_high)}   SL {int(sl)}   TP {int(tp)}",
+            ha="center",
+            fontsize=10,
+            color="white"
+        )
+
         ax = axlist[0]
+
+        ax.text(
+            chart_df.index[-1],
+            entry_high,
+            " ENTRY",
+            color="#fbbf24",
+            fontsize=9
+        )
+
+        ax.text(
+            0.02,
+            0.92,
+            f"Foreign: {ftxt}",
+            transform=ax.transAxes,
+            fontsize=9,
+            bbox=dict(
+                boxstyle="round",
+                facecolor="#1f2937",
+                alpha=0.8
+            )
+        )
+
+        ax.text(
+            chart_df.index[-1],
+            tp,
+            f" TP {int(tp)}",
+            color="#00ff88",
+            fontsize=9
+        )
+
+        ax.text(
+            chart_df.index[-1],
+            sl,
+            f" SL {int(sl)}",
+            color="#ff4d4d",
+            fontsize=9
+        )
+
+        ax.text(
+            0.02,
+            0.88,
+            f"{breakout_label}",
+            transform=ax.transAxes,
+            fontsize=10,
+            fontweight="bold",
+            color="white",
+            ha="right",
+            bbox=dict(
+                boxstyle="round",
+                facecolor="#16a34a" if breakout_label=="BREAKOUT" else "#f5930b",
+                alpha=0.8
+            )
+        )
+
+        ax.text(
+            0.5,
+            0.5,
+            sym,
+            transform=ax.transAxes,
+            fontsize=38,
+            color="white",
+            alpha=0.03,
+            ha="center",
+            va="center",
+            fontweight="bold"
+        )
 
         ax.axhspan(
             zone_low,
             breakout,
-            alpha=0.08,
+            alpha=0.025,
             color=ACC_ZONE_COLOR
         )
 
-        legend_items = [
-            Line2D([0],[0],color=MA20_COLOR,lw=2,label="MA20"),
-            Line2D([0],[0],color=MA30_COLOR,lw=2,label="MA30"),
-            Line2D([0],[0],color=VWAP_COLOR,lw=2,label="VWAP"),
-            Line2D([0],[0],color=EMA9_COLOR,lw=2,label="EMA9"),
+        ax.axhspan(
+            entry_low,
+            entry_high,
+            color=ENTRY_ZONE_COLOR,
+            alpha=0.06
+        )
 
+        legend_items = [
+            Line2D([0],[0],color=EMA9_COLOR,lw=2,label="EMA9"),
+            Line2D([0],[0],color=EMA21_COLOR,lw=2,label="EMA21"),
+            Line2D([0],[0],color=MA50_COLOR,lw=2,label="MA50"),
+            Line2D([0],[0],color=VWAP_COLOR,lw=2,label="VWAP"),
+            
             Line2D([0],[0],marker="^",color=BUY_COLOR,lw=0,label="BUY",markersize=10),
             Line2D([0],[0],marker="v",color=SELL_COLOR,lw=0,label="SELL",markersize=10),
 
             Line2D([0],[0],color=SL_COLOR,lw=2, label="STOP LOSS"),
             Line2D([0],[0],color=TP_COLOR,lw=2, label="TAKE PROFIT"),
 
-            Patch(color=ENTRY_ZONE_COLOR,alpha=0.15,label="ENTRY ZONE"),
-            Patch(color=ACC_ZONE_COLOR,alpha=0.08,label="ACCUMULATION ZONE")
+            Patch(facecolor=ENTRY_ZONE_COLOR,alpha=0.06,edgecolor="none", label="ENTRY ZONE"),
+            Patch(facecolor=ACC_ZONE_COLOR,alpha=0.025,edgecolor="none", label="ACCUMULATION ZONE")
         ]
 
         ax.legend(
             handles=legend_items,
-            loc="upper left",
-            fontsize=9,
+            loc="center left",
+            bbox_to_anchor=(-0.22, 0.5),
+            fontsize=8,
             frameon=True,
             facecolor="#111827",
-            edgecolor="gray"
+            edgecolor="gray",
+            labelspacing=0.6,
+            handlelength=1.6
         )
 
-        fig.subplots_adjust(left=0.06, right=0.96, top=0.90, bottom=0.08)
-        fig.savefig(file,dpi=160, bbox_inches="tight")
+        fig.subplots_adjust(left=0.28, right=0.97, top=0.82, bottom=0.10)
+        fig.savefig(file,dpi=120, facecolor=fig.get_facecolor(), pil_kwargs={"optimize": True, "compress_level": 9})
 
-        plt.close(fig)
+        if not os.path.exists(file):
+            return None
+
+        img = Image.open(file)
+        img = img.convert("P", palette=Image.ADAPTIVE)
+
+        img.save(
+            file,
+            format="PNG",
+            optimize=True
+        )
+
+        plt.close('all')
 
         return file
 

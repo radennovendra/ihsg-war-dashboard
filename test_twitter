@@ -1,0 +1,3 @@
+from twitter_engine import tweet_chart
+
+print("Twitter API loaded successfully")

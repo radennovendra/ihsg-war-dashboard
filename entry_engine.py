@@ -56,7 +56,7 @@ def mark_alert(sym):
 # ENTRY DETECTION
 # ==========================
 
-def detect_entry(sym, r):
+def detect_entry(sym, r, ihsg):
 
     df = None
     for _ in range(3):
@@ -68,7 +68,26 @@ def detect_entry(sym, r):
     if df is None or df.empty or len(df) < 30:
         return None
 
-    df = df.tail(30).copy()
+    df = df.tail(60).copy()
+
+    # ========================
+    # MARKET CONTEXT
+    # ========================
+
+    market_trend = "SIDEWAYS"
+
+    if ihsg is not None and len(ihsg) > 50:
+
+        ihsg["MA20"] = ihsg["Close"].rolling(20).mean()
+        ihsg["MA50"] = ihsg["Close"].rolling(50).mean()
+
+        last = ihsg.iloc[-1]
+
+        if last["Close"] > last["MA20"] > last["MA50"]:
+            market_trend = "BULL"
+
+        elif last["Close"] < last["MA20"] < last["MA50"]:
+            market_trend = "BEAR"
 
     # ========================
     # INDICATORS
@@ -77,10 +96,15 @@ def detect_entry(sym, r):
     df["EMA9"] = df["Close"].ewm(span=9, adjust=False).mean()
     df["MA20"] = df["Close"].rolling(20).mean()
 
+    price = df["Close"].iloc[-1]
+
+    ema = df["EMA9"].iloc[-1]
+
+    if price > ema * 1.06:
+        return None
+
     typical = (df["High"] + df["Low"] + df["Close"]) / 3
     df["VWAP"] = (typical * df["Volume"]).cumsum() / df["Volume"].cumsum()
-
-    price = df["Close"].iloc[-1]
 
     entry_low = float(r["entry_low"])
     entry_high = float(r["entry_high"])
@@ -93,6 +117,40 @@ def detect_entry(sym, r):
         return None
 
     # ========================
+    # RSI
+    # ========================
+
+    delta = df["Close"].diff()
+
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+
+    avg_gain = gain.rolling(14).mean()
+    avg_loss = loss.rolling(14).mean()
+
+    rs = avg_gain / avg_loss
+
+    df["RSI"] = 100 - (100 / (1 + rs))
+
+    confirmations = []
+
+    # ========================
+    # RSI BOUNCE
+    # ========================
+
+    rsi = df["RSI"]
+
+    if pd.isna(rsi.iloc[-1]) or pd.isna(rsi.iloc[-2]):
+        pass
+    else:
+        if (
+            rsi.iloc[-2] < 45 and
+            rsi.iloc[-1] > rsi.iloc[-2] and
+            rsi.iloc[-1] > 40
+        ):
+            confirmations.append("RSI_BOUNCE")
+
+    # ========================
     # VOLUME
     # ========================
 
@@ -102,14 +160,23 @@ def detect_entry(sym, r):
     if pd.isna(avgvol) or avgvol == 0:
         avgvol = vol
 
-    confirmations = []
-
     # ========================
     # TREND
     # ========================
 
     if df["EMA9"].iloc[-1] > df["MA20"].iloc[-1]:
         confirmations.append("TREND")
+    
+    # ========================
+    # PULLBACK DEPTH
+    # ========================
+
+    recent_high = df["High"].rolling(20).max().iloc[-1]
+
+    pullback = (recent_high - price) / recent_high
+
+    if pullback < 0.08:
+        confirmations.append("PULLBACK_OK")
 
     # ========================
     # ENTRY MIDPOINT FILTER
@@ -139,7 +206,7 @@ def detect_entry(sym, r):
         confirmations.append("EMA_RECLAIM")
 
     # ========================
-    # VWAP RECLAIM
+    # VWAP
     # ========================
 
     if (
@@ -148,21 +215,39 @@ def detect_entry(sym, r):
     ):
         confirmations.append("VWAP_RECLAIM")
 
+    elif (
+        df["Low"].iloc[-1] <= df["VWAP"].iloc[-1] * 1.01 and
+        df["Close"].iloc[-1] > df["VWAP"].iloc[-1]
+    ):
+        confirmations.append("VWAP_SUPPORT")
+
+    elif df["Close"].iloc[-1] > df["VWAP"].iloc[-1] * 1.015:
+        confirmations.append("VWAP_MOMENTUM")
+
     # ========================
     # MOMENTUM BREAKOUT
     # ========================
 
-    if df["Close"].iloc[-1] > df["High"].iloc[-2]:
+    recent_high = df["High"].rolling(5).max().iloc[-2]
+
+    if (
+        df["Close"].iloc[-1] > recent_high and
+        df["Volume"].iloc[-1] > avgvol * 1.2
+    ):
         confirmations.append("BREAKOUT")
 
     # ========================
     # SCORE
     # ========================
 
-    score = len(confirmations)
+    score = min(len(confirmations), 5)
 
-    if score < 3:
-        return None
+    if market_trend == "BEAR":
+        if score < 5:
+            return None
+    else:
+        if score < 4:
+            return None
 
     confidence = "MEDIUM"
 
@@ -231,6 +316,8 @@ def run():
 
     while True:
 
+        ihsg = download_price("^JKSE")
+
         if not market_open():
 
             print("Market Closed")
@@ -254,7 +341,7 @@ def run():
 
                 try:
 
-                    signal = detect_entry(sym, r)
+                    signal = detect_entry(sym, r, ihsg)
 
                     if signal is None:
                         continue

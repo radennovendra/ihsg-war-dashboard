@@ -51,9 +51,11 @@ def hedge_expectancy(df, horizon=20):
     if len(close) < horizon + 30:
         return None
 
-    # Forward returns
     fwd = close.shift(-horizon) / close - 1
     fwd = fwd.dropna()
+
+    if len(fwd) == 0:
+        return None
 
     wins = fwd[fwd > 0]
     losses = fwd[fwd <= 0]
@@ -66,8 +68,17 @@ def hedge_expectancy(df, horizon=20):
     expectancy = (winrate * avg_win) - ((1 - winrate) * avg_loss)
 
     total_gain = float(wins.sum()) if len(wins) > 0 else 0
-    total_loss = float(abs(losses.sum())) if len(losses) > 0 else 1e-9
+    total_loss = float(abs(losses.sum())) if len(losses) > 0 else 0
 
-    profit_factor = total_gain / total_loss
+    if total_loss == 0:
+        profit_factor = 5.0
+    else:
+        profit_factor = total_gain / total_loss
+    
+    profit_factor = min(profit_factor, 5.0)
 
-    return winrate, avg_win, avg_loss, expectancy, profit_factor
+    trades_count = len(fwd)
+
+    roi = expectancy * trades_count
+
+    return winrate, avg_win, avg_loss, expectancy, profit_factor, roi

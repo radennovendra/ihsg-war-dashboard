@@ -17,6 +17,11 @@ from utils.safe_loop import memory_guard
 from telegram_engine import send, send_photo, send_file
 from utils.chart_generator import generate_chart
 from utils.beifraksi import tick_size, floor_tick, ceil_tick
+from twitter_engine import tweet
+from twitter_signal import build_tweet
+from utils.twitter_guard import allow
+
+TWITTER_ENABLED = False
 
 WATCHLIST_TOPN = 15
 BATCH_LIMIT = 200
@@ -73,6 +78,9 @@ Risk Mode  : {market_regime}
 
         sector = r.get("sector","Unknown")
 
+        pf = r.get("pf20",1)
+        badge = pf_badge(pf)
+
         entry = f"{int(r['entry_low'])} — {int(r['entry_high'])}"
         tp = int(r["tp2"])
         sl = int(r["stoploss"])
@@ -101,12 +109,13 @@ Score : {r['score']}
 🛑 SL    : {sl}
 🏁 TP    : {tp}
 
-📈 WinRate20D : {win20:.0f}%
-⚡ Exp20D     : {exp20:.2f}%
-
 🌍 Foreign Flow
 {ftxt} | {r.get("foreign_status","")}
 
+BACKTEST (1 Month) :
+📈 WinRate: {win20:.0f}%
+⚡ Expectancy: {exp20:.2f}%
+💰 ProfitFactor: {pf:.2f} {badge}
 ━━━━━━━━━━━━━━━━
 """
 
@@ -156,6 +165,23 @@ def star(score):
     if score >= 70: return "⭐⭐⭐"
     if score >= 50: return "⭐⭐"
     return "⭐"
+
+def pf_badge(pf):
+
+    if pf >= 3:
+        return "🏆 ELITE"
+
+    elif pf >= 2:
+        return "🚀 STRONG"
+
+    elif pf >= 1.5:
+        return "👍 GOOD"
+
+    elif pf >= 1:
+        return "⚠ WEAK"
+
+    else:
+        return "❌ LOSING"
 
 # ==========================
 # TOP FOREIGN
@@ -851,7 +877,7 @@ def run():
         try:
             exp20 = hedge_expectancy(df, horizon=20)
             if exp20:
-                res["win20d"], _, _, res["exp20"], res["pf20"] = exp20
+                res["win20d"], _, _, res["exp20"], res["pf20"], res["roi20"] = exp20
         except:
             pass
 
@@ -945,20 +971,36 @@ def run():
 
         for sym, r in top:
 
-            chart = generate_chart(sym, r)
-            if chart and os.path.exists(chart):
+            pf = r.get("pf20",1)
+            badge = pf_badge(pf)
 
-                caption = f"""
-    {sym}
-    Score: {r['score']}
-    Entry: {int(r['entry_low'])}-{int(r['entry_high'])}
-    SL: {int(r['stoploss'])}
-    TP: {int(r['tp2'])}
+            df_chart = safe_download(sym)
 
-    Win20D: {r.get('win20d',0)*100:.0f}%
-    Exp20D: {r.get('exp20',0)*100:.2f}%
-    """
-                send_photo(chart, caption=caption)
+            if df_chart is None:
+                print("Chart skipped (no data)", sym)
+                continue
+
+            chart = generate_chart(sym, r, df_chart)
+
+            if chart is None or not os.path.exists(chart):
+                print("Chart skipped:", sym)
+                continue
+                
+            caption = f"""
+            {sym}
+            Score: {r['score']}
+            Entry: {int(r['entry_low'])}-{int(r['entry_high'])}
+            SL: {int(r['stoploss'])}
+            TP: {int(r['tp2'])}
+
+            BACKTEST (1 Month) :
+            📈 Winrate: {r.get('win20d',0)*100:.0f}%
+            ⚡ Expectancy: {r.get('exp20',0)*100:.2f}%
+            💰 ProfitFactor: {pf:.2f} {badge}
+            """
+            print("Sending chart:", chart)
+
+            send_photo(chart, caption=caption)
     
         excel_path = "reports/HEDGEFUND_TERMINAL.xlsx"
         
@@ -972,6 +1014,34 @@ def run():
         print("📩 Telegram sent")
     except Exception as e:
         print("Telegram error:", e)
+    
+    # ==========================
+    # TWITTER SIGNAL
+    # ==========================
+    if TWITTER_ENABLED:
+
+        try:
+
+            if results:
+
+                sym, r = results[0]   # hanya 1 signal terbaik
+
+                tweet = build_tweet(sym, r)
+
+                chart = generate_chart(sym, r)
+
+                if chart and os.path.exists(chart):
+
+                    if allow(sym):
+                        
+                        tweet_chart(chart, tweet)
+                        
+                        print("🐦 Twitter signal sent:", sym)
+                    else:
+                        print("Twitter skipped duplicate", sym)
+
+        except Exception as e:
+            print("Twitter error:", e)
 
     print("✅ Scan done")
 
